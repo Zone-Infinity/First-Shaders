@@ -1,11 +1,15 @@
 #version 330 compatibility
+
 #include /lib/distort.glsl
+#define SHADOW_QUALITY 2
+#define SHADOW_SOFTNESS 1
 
 uniform sampler2D colortex0;
 uniform sampler2D colortex1;
 uniform sampler2D colortex2;
 uniform vec3 shadowLightPosition; // Position of Sun OR Moon
 uniform sampler2D depthtex0; // Tells us how far the pixel is
+uniform sampler2D noisetex;
 
 uniform sampler2D shadowtex0;
 uniform sampler2D shadowtex1; // Shadow map containing only opaque stuff
@@ -18,6 +22,9 @@ uniform mat4 gbufferModelViewInverse;
 uniform mat4 gbufferProjectionInverse;
 uniform mat4 shadowModelView;
 uniform mat4 shadowProjection;
+
+uniform float viewWidth;
+uniform float viewHeight;
 
 in vec2 texcoord;
 
@@ -39,6 +46,7 @@ const vec3 blocklightColor = vec3(1.0, 0.5, 0.08);
 const vec3 skylightColor = vec3(0.05, 0.15, 0.3);
 const vec3 sunlightColor = vec3(1.0);
 const vec3 ambientColor = vec3(0.1);
+const int shadowMapResolution = 2048;
 
 vec3 getShadow(vec3 shadowScreenPos) {
 	float transparentShadow = step(shadowScreenPos.z, texture(shadowtex0, shadowScreenPos.xy).r); // sample the shadow map containing everything
@@ -73,6 +81,43 @@ vec3 getShadow(vec3 shadowScreenPos) {
 	return shadowColor.rgb * (1.0 - shadowColor.a);
 }
 
+vec4 getNoise(vec2 coord) {
+	ivec2 screenCoord = ivec2(coord * vec2(viewWidth, viewHeight)); // exact pixel coordinate onscreen
+	ivec2 noiseCoord = screenCoord % 64; // wrap to range of noiseTextureResolution
+	return texelFetch(noisetex, noiseCoord, 0);
+}
+
+vec3 getSoftShadow(vec4 shadowClipPos) {
+	const float range = SHADOW_SOFTNESS / 2.0; // how far away from the original position we take our samples from
+	const float increment = range / SHADOW_QUALITY; // distance between each sample
+
+	float noise = getNoise(texcoord).r;
+
+	float theta = noise * radians(360.0); // random angle using noise value
+	float cosTheta = cos(theta);
+	float sinTheta = sin(theta);
+
+	mat2 rotation = mat2(cosTheta, -sinTheta, sinTheta, cosTheta); // matrix to rotate the offset around the original position by the angle
+
+	vec3 shadowAccum = vec3(0.0); // sum of all shadow samples
+	int samples = 0;
+
+	for(float x = -range; x <= range; x += increment) {
+		for(float y = -range; y <= range; y += increment) {
+			vec2 offset = rotation * vec2(x, y) / shadowMapResolution; // offset in the rotated direction by the specified amount. We divide by the resolution so our offset is in terms of pixels
+			vec4 offsetShadowClipPos = shadowClipPos + vec4(offset, 0.0, 0.0); // add offset
+			offsetShadowClipPos.z -= 0.001; // apply bias
+			offsetShadowClipPos.xyz = distortShadowClipPos(offsetShadowClipPos.xyz); // apply distortion
+			vec3 shadowNDCPos = offsetShadowClipPos.xyz / offsetShadowClipPos.w; // convert to NDC space
+			vec3 shadowScreenPos = shadowNDCPos * 0.5 + 0.5; // convert to screen space
+			shadowAccum += getShadow(shadowScreenPos); // take shadow sample
+			samples++;
+		}
+	}
+
+	return shadowAccum / float(samples); // divide sum by count, getting average shadow
+}
+
 vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
 	vec4 homPos = projectionMatrix * vec4(position, 1.0);
 	return homPos.xyz / homPos.w;
@@ -85,7 +130,7 @@ void main() {
 
 	float depth = texture(depthtex0, texcoord).r;
 	if(depth == 1.0) {
-	 	return;
+		return;
 	}
 
 	vec2 lightmap = texture(colortex1, texcoord).rg;
@@ -111,18 +156,21 @@ void main() {
 	vec3 feetPlayerPos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
 	vec3 shadowViewPos = (shadowModelView * vec4(feetPlayerPos, 1.0)).xyz;
 	vec4 shadowClipPos = shadowProjection * vec4(shadowViewPos, 1.0);
-	shadowClipPos.z -= 0.001; //shadow bias
-	shadowClipPos.xyz = distortShadowClipPos(shadowClipPos.xyz); // distortion
-	vec3 shadowNDCPos = shadowClipPos.xyz / shadowClipPos.w;
-	vec3 shadowScreenPos = shadowNDCPos * 0.5 + 0.5; // We can sample shadow map at this pos
+
+	// shadowClipPos.z -= 0.001; //shadow bias
+	// shadowClipPos.xyz = distortShadowClipPos(shadowClipPos.xyz); // distortion
+	// vec3 shadowNDCPos = shadowClipPos.xyz / shadowClipPos.w;
+	// vec3 shadowScreenPos = shadowNDCPos * 0.5 + 0.5; // We can sample shadow map at this pos
 
 	// float shadow = step(shadowScreenPos.z, texture(shadowtex0, shadowScreenPos.xy).r);
-	vec3 shadow = getShadow(shadowScreenPos);
+	// vec3 shadow = getShadow(shadowScreenPos);
+	vec3 shadow = getSoftShadow(shadowClipPos);
 	vec3 sunlight = sunlightColor * clamp(dot(worldLightVector, normal), 0.0, 1.0) * shadow;
 
-	//if(texcoord.x > 0.5)
+	// if(texcoord.x > 0.5)
 		color.rgb *= blocklight + skylight + ambient + sunlight;
 
+	// color.rgb = texture(noisetex, texcoord).rgb; // Checking noise texture
 
 	/// Greyscale effect 
 	// float grayscale = dot(color.rgb, vec3(1.0 / 3.0));
@@ -178,5 +226,5 @@ void main() {
 	/// Like "Screen spinning about y axis, so basically you'll see a 2D Plane rotating in 3D"
 	///      "Ripple effect maybe ?"
 	/// 	 and etc etc
-	
+
 }
