@@ -37,5 +37,6 @@ void main() {
 
     // color.rgb = mix(color.rgb, fogColor, clamp(fogFactor, 0.0, 1.0));
 
-    color.rgb = mix(color.rgb, pow(fogColor, vec3(2.2)), length(viewPos) / far);
+    // Fog 
+    // color.rgb = mix(color.rgb, pow(fogColor, vec3(2.2)), length(viewPos) / far);
 }

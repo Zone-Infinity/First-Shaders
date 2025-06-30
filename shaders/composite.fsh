@@ -123,6 +123,8 @@ vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
 	return homPos.xyz / homPos.w;
 }
 
+bool debugMode = false;
+
 void main() {
 	color = texture(colortex0, texcoord);
 
@@ -167,7 +169,7 @@ void main() {
 	vec3 shadow = getSoftShadow(shadowClipPos);
 	vec3 sunlight = sunlightColor * clamp(dot(worldLightVector, normal), 0.0, 1.0) * shadow;
 
-	// if(texcoord.x > 0.5)
+	if(texcoord.x > (debugMode ? 0.5f : 0.0f))
 		color.rgb *= blocklight + skylight + ambient + sunlight;
 
 	// color.rgb = texture(noisetex, texcoord).rgb; // Checking noise texture
